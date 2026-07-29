@@ -1,0 +1,302 @@
+/**
+ * YH STUDIO BACKEND
+ * Order management + AI Concept Generation
+ */
+
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs').promises;
+const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const cron = require('node-cron');
+
+const orchestrator = require('./agents/orchestrator');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const DATA_DIR = path.join(__dirname, 'data');
+const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static('public'));
+
+// Ensure data directory exists
+async function ensureDataDir() {
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    try {
+      await fs.access(ORDERS_FILE);
+    } catch {
+      await fs.writeFile(ORDERS_FILE, JSON.stringify([], null, 2));
+    }
+  } catch (err) {
+    console.error('Data dir error:', err);
+  }
+}
+
+// Load orders
+async function loadOrders() {
+  try {
+    const data = await fs.readFile(ORDERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
+
+// Save orders
+async function saveOrders(orders) {
+  await fs.writeFile(ORDERS_FILE, JSON.stringify(orders, null, 2));
+}
+
+// ========================================
+// PUBLIC API
+// ========================================
+
+// Submit order
+app.post('/api/orders', async (req, res) => {
+  try {
+    const { name, email, package: pkg, message, source = 'website' } = req.body;
+    
+    if (!name || !email || !message) {
+      return res.status(400).json({ error: 'Name, email, and message are required' });
+    }
+
+    const order = {
+      id: uuidv4(),
+      name,
+      email,
+      package: pkg || 'not_specified',
+      brief: message,
+      source,
+      status: 'received',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      concepts: [],
+      aiLogs: []
+    };
+
+    const orders = await loadOrders();
+    orders.unshift(order);
+    await saveOrders(orders);
+
+    // Trigger AI generation in background
+    generateConceptsForOrder(order);
+
+    res.status(201).json({ 
+      success: true, 
+      orderId: order.id,
+      message: 'Order received. AI agents are now generating concepts.' 
+    });
+  } catch (err) {
+    console.error('Order error:', err);
+    res.status(500).json({ error: 'Failed to process order' });
+  }
+});
+
+// Get order status (client-facing)
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    const orders = await loadOrders();
+    const order = orders.find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    // Return sanitized version (no internal logs)
+    res.json({
+      id: order.id,
+      status: order.status,
+      createdAt: order.createdAt,
+      concepts: order.concepts,
+      conceptCount: order.concepts.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========================================
+// ADMIN API (Protected)
+// ========================================
+
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || auth !== `Bearer ${process.env.ADMIN_PASSWORD || 'yhstudio2026'}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// Get all orders (admin)
+app.get('/api/admin/orders', requireAuth, async (req, res) => {
+  try {
+    const orders = await loadOrders();
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get single order details (admin)
+app.get('/api/admin/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const orders = await loadOrders();
+    const order = orders.find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update order status (admin)
+app.patch('/api/admin/orders/:id', requireAuth, async (req, res) => {
+  try {
+    const orders = await loadOrders();
+    const idx = orders.findIndex(o => o.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Order not found' });
+    
+    const allowed = ['status', 'notes', 'concepts', 'aiLogs'];
+    allowed.forEach(key => {
+      if (req.body[key] !== undefined) orders[idx][key] = req.body[key];
+    });
+    orders[idx].updatedAt = new Date().toISOString();
+    
+    await saveOrders(orders);
+    res.json(orders[idx]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Regenerate concepts for an order
+app.post('/api/admin/orders/:id/regenerate', requireAuth, async (req, res) => {
+  try {
+    const orders = await loadOrders();
+    const order = orders.find(o => o.id === req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    order.status = 'regenerating';
+    order.updatedAt = new Date().toISOString();
+    await saveOrders(orders);
+    
+    generateConceptsForOrder(order);
+    res.json({ success: true, message: 'Regeneration started' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete order
+app.delete('/api/admin/orders/:id', requireAuth, async (req, res) => {
+  try {
+    let orders = await loadOrders();
+    orders = orders.filter(o => o.id !== req.params.id);
+    await saveOrders(orders);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Dashboard stats
+app.get('/api/admin/stats', requireAuth, async (req, res) => {
+  try {
+    const orders = await loadOrders();
+    const stats = {
+      total: orders.length,
+      received: orders.filter(o => o.status === 'received').length,
+      generating: orders.filter(o => o.status === 'generating').length,
+      completed: orders.filter(o => o.status === 'completed').length,
+      pending: orders.filter(o => o.status === 'pending_review').length,
+      today: orders.filter(o => {
+        const d = new Date(o.createdAt);
+        const now = new Date();
+        return d.toDateString() === now.toDateString();
+      }).length
+    };
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========================================
+// AI GENERATION ENGINE
+// ========================================
+
+async function generateConceptsForOrder(order) {
+  try {
+    const orders = await loadOrders();
+    const idx = orders.findIndex(o => o.id === order.id);
+    if (idx === -1) return;
+
+    orders[idx].status = 'generating';
+    orders[idx].updatedAt = new Date().toISOString();
+    await saveOrders(orders);
+
+    console.log(`[AI] Starting generation for order ${order.id}`);
+    
+    const result = await orchestrator.generate(order.brief, {
+      orderId: order.id,
+      onLog: async (log) => {
+        const current = await loadOrders();
+        const i = current.findIndex(o => o.id === order.id);
+        if (i !== -1) {
+          current[i].aiLogs = current[i].aiLogs || [];
+          current[i].aiLogs.push({
+            timestamp: new Date().toISOString(),
+            ...log
+          });
+          await saveOrders(current);
+        }
+      }
+    });
+
+    const final = await loadOrders();
+    const fi = final.findIndex(o => o.id === order.id);
+    if (fi !== -1) {
+      final[fi].status = 'completed';
+      final[fi].concepts = result.concepts;
+      final[fi].aiAnalysis = result.analysis;
+      final[fi].updatedAt = new Date().toISOString();
+      await saveOrders(final);
+    }
+
+    console.log(`[AI] Completed generation for order ${order.id}`);
+  } catch (err) {
+    console.error(`[AI] Generation failed for ${order.id}:`, err);
+    const orders = await loadOrders();
+    const idx = orders.findIndex(o => o.id === order.id);
+    if (idx !== -1) {
+      orders[idx].status = 'error';
+      orders[idx].error = err.message;
+      orders[idx].updatedAt = new Date().toISOString();
+      await saveOrders(orders);
+    }
+  }
+}
+
+// ========================================
+// STARTUP
+// ========================================
+
+async function start() {
+  await ensureDataDir();
+  app.listen(PORT, () => {
+    console.log(`
+╔══════════════════════════════════════════╗
+║     YH STUDIO BACKEND ONLINE             ║
+╠══════════════════════════════════════════╣
+║  Port:     ${PORT.toString().padEnd(28)}║
+║  Admin:    http://localhost:${PORT}/admin  ║
+║  API:      http://localhost:${PORT}/api    ║
+╚══════════════════════════════════════════╝
+    `);
+  });
+}
+
+start();

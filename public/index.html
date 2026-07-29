@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YH Studio — Admin Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+  <!-- Login Screen -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-box">
+      <div class="login-brand">
+        <span class="login-logo">YH</span>
+        <span class="login-dot"></span>
+      </div>
+      <h1>Studio Admin</h1>
+      <p>Enter admin password to access orders</p>
+      <input type="password" id="passwordInput" placeholder="Password" autofocus>
+      <button id="loginBtn">Enter</button>
+      <div class="login-error" id="loginError"></div>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="dashboard" id="dashboard" style="display:none;">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-logo">YH</span>
+        <span class="brand-tag">Studio Admin</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-view="orders">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          Orders
+        </a>
+        <a href="#" class="nav-item" data-view="stats">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          Analytics
+        </a>
+        <a href="#" class="nav-item" data-view="ai">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M7.78 7.78L3.54 3.54M23 12h-6m-6 0H1m20.24 4.24l-4.24-4.24M7.78 16.24l-4.24 4.24"/></svg>
+          AI Studio
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="logout-btn" id="logoutBtn">Logout</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Header -->
+      <header class="main-header">
+        <h2 id="pageTitle">Orders</h2>
+        <div class="header-actions">
+          <button class="refresh-btn" id="refreshBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <!-- Stats View -->
+      <div class="view" id="statsView" style="display:none;">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-num" id="statTotal">0</span>
+            <span class="stat-label">Total Orders</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="statToday">0</span>
+            <span class="stat-label">Today</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="statCompleted">0</span>
+            <span class="stat-label">Completed</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="statPending">0</span>
+            <span class="stat-label">Pending Review</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="statGenerating">0</span>
+            <span class="stat-label">Generating</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Orders View -->
+      <div class="view" id="ordersView">
+        <div class="filters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="received">Received</button>
+          <button class="filter-btn" data-filter="generating">Generating</button>
+          <button class="filter-btn" data-filter="completed">Completed</button>
+          <button class="filter-btn" data-filter="error">Error</button>
+        </div>
+        <div class="orders-list" id="ordersList"></div>
+      </div>
+
+      <!-- AI Studio View -->
+      <div class="view" id="aiView" style="display:none;">
+        <div class="ai-panel">
+          <div class="ai-input-section">
+            <h3>Generate Concepts Manually</h3>
+            <textarea id="manualPrompt" rows="4" placeholder="Describe a brand project..."></textarea>
+            <button id="manualGenerateBtn">Generate Concepts</button>
+          </div>
+          <div class="ai-results-section" id="manualResults"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Order Detail Modal -->
+  <div class="modal" id="orderModal" style="display:none;">
+    <div class="modal-backdrop" id="modalBackdrop"></div>
+    <div class="modal-content">
+      <button class="modal-close" id="modalClose">&times;</button>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="js/admin.js"></script>
+</body>
+</html>

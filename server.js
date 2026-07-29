@@ -446,10 +446,17 @@ async function generateConceptsForOrder(order) {
 // KEEP-ALIVE (prevents Render free tier sleep)
 // ========================================
 if (process.env.KEEP_ALIVE !== 'false') {
-  cron.schedule('*/10 * * * *', async () => {
+  cron.schedule('*/8 * * * *', async () => {
     try {
-      console.log(`[KeepAlive] ${new Date().toISOString()} — pinging self`);
-      // Internal no-op to keep instance warm
+      console.log(`[KeepAlive] ${new Date().toISOString()} — keeping instance warm`);
+      // Self-ping to prevent Render free tier sleep
+      const http = require('http');
+      const opts = { hostname: 'localhost', port: PORT, path: '/api/ping', method: 'GET', timeout: 5000 };
+      const req = http.request(opts, (res) => {
+        console.log(`[KeepAlive] Self-ping status: ${res.statusCode}`);
+      });
+      req.on('error', (err) => console.error('[KeepAlive] Self-ping failed:', err.message));
+      req.end();
     } catch (err) {
       console.error('[KeepAlive] Error:', err.message);
     }

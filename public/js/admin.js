@@ -166,11 +166,12 @@ function renderOrders() {
       </div>
       <div class="order-meta">
         <span class="order-status status-${order.status}">${order.status}</span>
-        <span class="order-package">${order.package}</span>
+        <span class="order-package">${order.service || order.package}</span>
       </div>
       <div class="order-meta">
         <span class="order-date">${formatDate(order.createdAt)}</span>
         <span class="order-date">${order.concepts?.length || 0} concepts</span>
+        ${order.paymentMethod ? `<span class="order-date" style="text-transform:uppercase;font-size:0.7rem;">${order.paymentMethod}</span>` : ''}
       </div>
     </div>
   `).join('');

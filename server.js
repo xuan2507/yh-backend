@@ -22,10 +22,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 
-const ADMIN_PASSWORDS = [
-  process.env.ADMIN_PASSWORD,
-  'yhstudio2026'
-].filter(Boolean);
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'yhstudio2026';
 const MONGODB_URI = process.env.MONGODB_URI;
 
 // State
@@ -248,7 +245,7 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized — Bearer token required' });
   }
   const token = auth.replace('Bearer ', '').trim();
-  if (!ADMIN_PASSWORDS.includes(token)) {
+  if (token !== ADMIN_PASSWORD) {
     return res.status(401).json({ error: 'Unauthorized — invalid token' });
   }
   next();

@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design Editor — YH Studio Admin</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --bg-elevated: #1a1714;
+      --bg-card: #1e1e1e;
+      --text: #f5f0e8;
+      --text-secondary: #9a9488;
+      --accent: #b8954a;
+      --border: rgba(245, 240, 232, 0.08);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .editor-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+    }
+    .editor-header h1 {
+      font-size: 1rem;
+      font-weight: 500;
+    }
+    .editor-tools {
+      display: flex;
+      gap: 8px;
+    }
+    .tool-btn {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 4px;
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .tool-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+    .tool-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--bg);
+    }
+    .editor-main {
+      flex: 1;
+      display: flex;
+    }
+    .canvas-area {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a1a;
+      position: relative;
+    }
+    #designCanvas {
+      background: #fff;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+    .properties-panel {
+      width: 260px;
+      background: var(--bg-elevated);
+      border-left: 1px solid var(--border);
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .prop-group {
+      margin-bottom: 24px;
+    }
+    .prop-group label {
+      display: block;
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+    .prop-group input[type="text"],
+    .prop-group input[type="number"] {
+      width: 100%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      border-radius: 4px;
+      color: var(--text);
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .prop-group input[type="color"] {
+      width: 100%;
+      height: 36px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .prop-row {
+      display: flex;
+      gap: 8px;
+    }
+    .prop-row input {
+      flex: 1;
+    }
+    .layers-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .layer-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--bg-card);
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .layer-item:hover {
+      border: 1px solid var(--accent);
+    }
+    .layer-item.active {
+      background: rgba(184, 149, 74, 0.1);
+      border: 1px solid var(--accent);
+    }
+    .layer-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="editor-header">
+    <h1>YH Design Editor</h1>
+    <div class="editor-tools">
+      <button class="tool-btn active" data-tool="select">Select</button>
+      <button class="tool-btn" data-tool="rect">Rectangle</button>
+      <button class="tool-btn" data-tool="circle">Circle</button>
+      <button class="tool-btn" data-tool="text">Text</button>
+      <button class="tool-btn" data-tool="image">Image</button>
+      <button class="tool-btn" onclick="exportDesign()">Export</button>
+    </div>
+  </div>
+  <div class="editor-main">
+    <div class="canvas-area">
+      <canvas id="designCanvas" width="600" height="400"></canvas>
+    </div>
+    <div class="properties-panel">
+      <div class="prop-group">
+        <label>Canvas Size</label>
+        <div class="prop-row">
+          <input type="number" id="canvasW" value="600" placeholder="W">
+          <input type="number" id="canvasH" value="400" placeholder="H">
+        </div>
+      </div>
+      <div class="prop-group">
+        <label>Background</label>
+        <input type="color" id="bgColor" value="#ffffff">
+      </div>
+      <div class="prop-group">
+        <label>Fill Color</label>
+        <input type="color" id="fillColor" value="#E8CCC5">
+      </div>
+      <div class="prop-group">
+        <label>Stroke Color</label>
+        <input type="color" id="strokeColor" value="#807E79">
+      </div>
+      <div class="prop-group">
+        <label>Text Content</label>
+        <input type="text" id="textContent" placeholder="Enter text...">
+      </div>
+      <div class="prop-group">
+        <label>Layers</label>
+        <div class="layers-list" id="layersList">
+          <div class="layer-item active">
+            <div class="layer-icon" style="background:#E8CCC5;"></div>
+            <span>Background</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('designCanvas');
+    const ctx = canvas.getContext('2d');
+    let currentTool = 'select';
+    let elements = [];
+    let isDrawing = false;
+    let startX, startY;
+    let selectedElement = null;
+
+    // Initialize canvas
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Tool switching
+    document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTool = btn.dataset.tool;
+      });
+    });
+
+    // Canvas events
+    canvas.addEventListener('mousedown', e => {
+      const rect = canvas.getBoundingClientRect();
+      startX = e.clientX - rect.left;
+      startY = e.clientY - rect.top;
+      isDrawing = true;
+
+      if (currentTool === 'text') {
+        const text = document.getElementById('textContent').value || 'Sample Text';
+        addElement('text', { x: startX, y: startY, text, font: '24px serif', fill: document.getElementById('fillColor').value });
+        isDrawing = false;
+      }
+    });
+
+    canvas.addEventListener('mousemove', e => {
+      if (!isDrawing || currentTool === 'text') return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      redraw();
+      ctx.strokeStyle = document.getElementById('strokeColor').value;
+      ctx.fillStyle = document.getElementById('fillColor').value;
+      ctx.globalAlpha = 0.5;
+
+      if (currentTool === 'rect') {
+        ctx.fillRect(startX, startY, x - startX, y - startY);
+        ctx.strokeRect(startX, startY, x - startX, y - startY);
+      } else if (currentTool === 'circle') {
+        const radius = Math.sqrt(Math.pow(x - startX, 2) + Math.pow(y - startY, 2));
+        ctx.beginPath();
+        ctx.arc(startX, startY, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    });
+
+    canvas.addEventListener('mouseup', e => {
+      if (!isDrawing) return;
+      const rect = canvas.getBoundingClientRect();
+      const endX = e.clientX - rect.left;
+      const endY = e.clientY - rect.top;
+      isDrawing = false;
+
+      if (currentTool === 'rect') {
+        addElement('rect', { x: startX, y: startY, w: endX - startX, h: endY - startY, fill: document.getElementById('fillColor').value, stroke: document.getElementById('strokeColor').value });
+      } else if (currentTool === 'circle') {
+        const radius = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
+        addElement('circle', { x: startX, y: startY, radius, fill: document.getElementById('fillColor').value, stroke: document.getElementById('strokeColor').value });
+      }
+    });
+
+    function addElement(type, props) {
+      elements.push({ type, ...props });
+      redraw();
+      updateLayers();
+    }
+
+    function redraw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = document.getElementById('bgColor').value;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      elements.forEach(el => {
+        ctx.fillStyle = el.fill || '#000';
+        ctx.strokeStyle = el.stroke || '#000';
+        if (el.type === 'rect') {
+          ctx.fillRect(el.x, el.y, el.w, el.h);
+          ctx.strokeRect(el.x, el.y, el.w, el.h);
+        } else if (el.type === 'circle') {
+          ctx.beginPath();
+          ctx.arc(el.x, el.y, el.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        } else if (el.type === 'text') {
+          ctx.font = el.font || '24px serif';
+          ctx.fillStyle = el.fill || '#000';
+          ctx.fillText(el.text, el.x, el.y);
+        }
+      });
+    }
+
+    function updateLayers() {
+      const list = document.getElementById('layersList');
+      list.innerHTML = '<div class="layer-item active"><div class="layer-icon" style="background:' + document.getElementById('bgColor').value + ';"></div><span>Background</span></div>';
+      elements.forEach((el, i) => {
+        const div = document.createElement('div');
+        div.className = 'layer-item';
+        div.innerHTML = `<div class="layer-icon" style="background:${el.fill || '#ccc'};"></div><span>${el.type} ${i + 1}</span>`;
+        list.appendChild(div);
+      });
+    }
+
+    function exportDesign() {
+      const link = document.createElement('a');
+      link.download = 'yh-design-' + Date.now() + '.png';
+      link.href = canvas.toDataURL();
+      link.click();
+    }
+
+    // Canvas size update
+    document.getElementById('canvasW').addEventListener('change', e => {
+      canvas.width = parseInt(e.target.value);
+      redraw();
+    });
+    document.getElementById('canvasH').addEventListener('change', e => {
+      canvas.height = parseInt(e.target.value);
+      redraw();
+    });
+    document.getElementById('bgColor').addEventListener('input', redraw);
+  </script>
+</body>
+</html>

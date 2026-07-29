@@ -20,9 +20,18 @@ const DATA_DIR = path.join(__dirname, 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['https://xuan2507.github.io', 'https://xuan2507.github.io/yh-website/', 'http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
 app.use(express.static('public'));
 
 // Ensure data directory exists

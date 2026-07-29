@@ -21,15 +21,35 @@ const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 
 // Middleware
 app.use(cors({
-  origin: ['https://xuan2507.github.io', 'https://xuan2507.github.io/yh-website/', 'http://localhost:3000', 'http://localhost:5500', 'http://127.0.0.1:5500'],
-  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  origin: function(origin, callback) {
+    const allowed = [
+      'https://xuan2507.github.io',
+      'https://xuan2507.github.io/yh-website',
+      'http://localhost:3000',
+      'http://localhost:5500',
+      'http://127.0.0.1:5500',
+      'null'
+    ];
+    if (!origin || allowed.some(a => origin.startsWith(a))) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'awake', time: Date.now() });
 });
 
 app.use(express.static('public'));

@@ -12,6 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 
 const orchestrator = require('./agents/orchestrator');
+const chatAgent = require('./agents/chatAgent');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -221,6 +222,95 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
     res.json(stats);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========================================
+// CHAT API (AI Assistant)
+// ========================================
+
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { sessionId, message, persona } = req.body;
+    if (!sessionId || !message) {
+      return res.status(400).json({ error: 'sessionId and message required' });
+    }
+    const response = await chatAgent.chat(sessionId, message, persona || 'sales');
+    res.json({ success: true, ...response });
+  } catch (err) {
+    console.error('Chat error:', err);
+    res.status(500).json({ error: 'Chat failed' });
+  }
+});
+
+app.get('/api/chat/sessions', requireAuth, async (req, res) => {
+  try {
+    const sessions = Array.from(chatAgent.sessions.entries()).map(([id, s]) => ({
+      id,
+      messageCount: s.history.length,
+      context: s.context,
+      lastActive: s.history[s.history.length - 1]?.time
+    }));
+    res.json(sessions);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ========================================
+// PAYMENT API
+// ========================================
+
+app.post('/api/payments/create', async (req, res) => {
+  try {
+    const { item, amount, currency = 'MYR', method } = req.body;
+    if (!item || !amount) {
+      return res.status(400).json({ error: 'item and amount required' });
+    }
+
+    const order = {
+      id: uuidv4(),
+      item,
+      amount,
+      currency,
+      method: method || 'pending',
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    // Store payment order
+    const orders = await loadOrders();
+    orders.push({ ...order, type: 'payment' });
+    await saveOrders(orders);
+
+    res.json({
+      success: true,
+      orderId: order.id,
+      checkoutUrl: `/checkout/${order.id}`,
+      message: 'Payment initiated. Complete checkout to finalize.'
+    });
+  } catch (err) {
+    console.error('Payment error:', err);
+    res.status(500).json({ error: 'Payment failed' });
+  }
+});
+
+app.post('/api/payments/confirm', async (req, res) => {
+  try {
+    const { orderId, method, reference } = req.body;
+    const orders = await loadOrders();
+    const idx = orders.findIndex(o => o.id === orderId && o.type === 'payment');
+    if (idx === -1) return res.status(404).json({ error: 'Order not found' });
+
+    orders[idx].status = 'completed';
+    orders[idx].method = method;
+    orders[idx].reference = reference;
+    orders[idx].paidAt = new Date().toISOString();
+    await saveOrders(orders);
+
+    res.json({ success: true, message: 'Payment confirmed' });
+  } catch (err) {
+    res.status(500).json({ error: 'Confirmation failed' });
   }
 });
 

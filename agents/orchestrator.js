@@ -19,10 +19,21 @@ const AGENTS = [
 class Orchestrator {
   constructor() {
     this.openai = null;
+    this.cache = new Map();
     if (process.env.OPENAI_API_KEY) {
       const OpenAI = require('openai');
       this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     }
+  }
+
+  _hashBrief(brief) {
+    // Simple hash for caching
+    let h = 0;
+    for (let i = 0; i < brief.length; i++) {
+      h = ((h << 5) - h) + brief.charCodeAt(i);
+      h |= 0;
+    }
+    return h.toString();
   }
 
   async generate(brief, options = {}) {
@@ -39,34 +50,44 @@ class Orchestrator {
     await log(`Order ID: ${orderId}`, 'info');
     await log(`Brief received: "${brief.substring(0, 100)}${brief.length > 100 ? '...' : ''}"`, 'info');
 
+    // Check cache
+    const briefHash = this._hashBrief(brief);
+    if (this.cache.has(briefHash)) {
+      await log('Cache hit — returning pre-generated concepts', 'success');
+      return this.cache.get(briefHash);
+    }
+
     // Phase 1: Parse & understand brief
     await log('Parsing client brief...', 'prompt');
     const keywords = this.extractKeywords(brief);
     await log(`Detected keywords: ${keywords.join(', ')}`, 'success');
 
-    // Phase 2: Run agents in sequence
-    const agentResults = {};
-    for (const agent of AGENTS) {
-      await log(`${agent.name}: Starting analysis...`, 'prompt');
+    // Phase 2: Run agents in PARALLEL for speed
+    await log('Running AI agents in parallel...', 'prompt');
+    const agentPromises = AGENTS.map(async agent => {
       try {
-        const result = await agent.instance.analyze(brief, keywords, agentResults, { 
+        const result = await agent.instance.analyze(brief, keywords, {}, { 
           openai: this.openai,
           log: async (msg) => log(msg, 'info')
         });
-        agentResults[agent.id] = result;
         await log(`${agent.name}: Analysis complete`, 'success');
+        return { id: agent.id, result };
       } catch (err) {
-        await log(`${agent.name}: ${err.message}`, 'error');
-        agentResults[agent.id] = agent.instance.getFallback(brief, keywords);
+        await log(`${agent.name}: Using fallback`, 'info');
+        return { id: agent.id, result: agent.instance.getFallback(brief, keywords) };
       }
-    }
+    });
+
+    const agentResultsArray = await Promise.all(agentPromises);
+    const agentResults = {};
+    agentResultsArray.forEach(({ id, result }) => { agentResults[id] = result; });
 
     // Phase 3: Synthesize concepts
     await log('Synthesizing final concepts...', 'prompt');
     const concepts = await this.synthesizeConcepts(brief, keywords, agentResults, log);
     await log('Generation complete.', 'success');
 
-    return {
+    const result = {
       concepts,
       analysis: {
         keywords,
@@ -74,6 +95,12 @@ class Orchestrator {
         generatedAt: new Date().toISOString()
       }
     };
+
+    // Cache result
+    this.cache.set(briefHash, result);
+    if (this.cache.size > 50) this.cache.delete(this.cache.keys().next().value);
+
+    return result;
   }
 
   extractKeywords(brief) {

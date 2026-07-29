@@ -24,6 +24,7 @@ const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'yhstudio2026';
 const MONGODB_URI = process.env.MONGODB_URI;
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
 // State
 let useMongo = false;
@@ -276,6 +277,11 @@ app.post('/api/orders', async (req, res) => {
       service: service || inferService(pkg, message)
     });
 
+    // Send webhook notification (fire-and-forget)
+    if (WEBHOOK_URL) {
+      sendWebhook(order).catch(err => console.error('[Webhook] Failed:', err.message));
+    }
+
     // Trigger AI generation in background (fire-and-forget)
     generateConceptsForOrder(order);
 
@@ -414,6 +420,35 @@ app.get('/api/admin/stats', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Stats error' });
   }
 });
+
+// ========================================
+// WEBHOOK NOTIFICATIONS
+// ========================================
+async function sendWebhook(order) {
+  try {
+    const payload = {
+      event: 'order.created',
+      order: {
+        id: order.id,
+        name: order.name,
+        email: order.email,
+        service: order.service,
+        price: order.price,
+        paymentMethod: order.paymentMethod,
+        brief: order.brief,
+        createdAt: order.createdAt
+      }
+    };
+    const res = await fetch(WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    console.log(`[Webhook] Sent order ${order.id}, status: ${res.status}`);
+  } catch (err) {
+    console.error('[Webhook] Error:', err.message);
+  }
+}
 
 // ========================================
 // AI GENERATION ENGINE

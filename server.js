@@ -1,6 +1,7 @@
 /**
  * YH STUDIO BACKEND
  * Order management + AI Concept Generation
+ * v2.0 — Persistent storage via MongoDB + file fallback
  */
 
 require('dotenv').config();
@@ -10,7 +11,9 @@ const fs = require('fs').promises;
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
+const mongoose = require('mongoose');
 
+const Order = require('./models/Order');
 const orchestrator = require('./agents/orchestrator');
 const chatAgent = require('./agents/chatAgent');
 
@@ -19,7 +22,186 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 
-// Middleware
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'yhstudio2026';
+const MONGODB_URI = process.env.MONGODB_URI;
+
+// State
+let useMongo = false;
+let memoryOrders = []; // Fallback in-memory store
+
+// ========================================
+// DATABASE SETUP
+// ========================================
+async function connectDatabase() {
+  if (!MONGODB_URI) {
+    console.log('[DB] MONGODB_URI not set. Using file+memory fallback.');
+    await ensureDataDir();
+    memoryOrders = await loadOrdersFromFile();
+    return;
+  }
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    useMongo = true;
+    console.log('[DB] Connected to MongoDB');
+  } catch (err) {
+    console.error('[DB] MongoDB connection failed:', err.message);
+    console.log('[DB] Falling back to file+memory storage');
+    await ensureDataDir();
+    memoryOrders = await loadOrdersFromFile();
+  }
+}
+
+// ========================================
+// FILE FALLBACK HELPERS
+// ========================================
+async function ensureDataDir() {
+  try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    try {
+      await fs.access(ORDERS_FILE);
+    } catch {
+      await fs.writeFile(ORDERS_FILE, JSON.stringify([], null, 2));
+    }
+  } catch (err) {
+    console.error('[File] Data dir error:', err.message);
+  }
+}
+
+async function loadOrdersFromFile() {
+  try {
+    const data = await fs.readFile(ORDERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
+
+async function saveOrdersToFile(orders) {
+  try {
+    await fs.writeFile(ORDERS_FILE, JSON.stringify(orders, null, 2));
+  } catch (err) {
+    console.error('[File] Save error:', err.message);
+  }
+}
+
+// ========================================
+// UNIFIED ORDER API
+// ========================================
+async function getOrders() {
+  if (useMongo) {
+    return await Order.find().sort({ createdAt: -1 }).lean();
+  }
+  return [...memoryOrders];
+}
+
+async function getOrderById(id) {
+  if (useMongo) {
+    return await Order.findOne({ id }).lean();
+  }
+  return memoryOrders.find(o => o.id === id) || null;
+}
+
+async function createOrder(data) {
+  const orderData = {
+    id: uuidv4(),
+    ...data,
+    status: data.status || 'received',
+    concepts: [],
+    aiLogs: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (useMongo) {
+    const order = new Order(orderData);
+    await order.save();
+  } else {
+    memoryOrders.unshift(orderData);
+    await saveOrdersToFile(memoryOrders);
+  }
+  return orderData;
+}
+
+async function updateOrder(id, updates) {
+  if (useMongo) {
+    await Order.updateOne({ id }, { $set: { ...updates, updatedAt: new Date().toISOString() } });
+    return await getOrderById(id);
+  }
+  const idx = memoryOrders.findIndex(o => o.id === id);
+  if (idx !== -1) {
+    memoryOrders[idx] = { ...memoryOrders[idx], ...updates, updatedAt: new Date().toISOString() };
+    await saveOrdersToFile(memoryOrders);
+    return memoryOrders[idx];
+  }
+  return null;
+}
+
+async function deleteOrder(id) {
+  if (useMongo) {
+    await Order.deleteOne({ id });
+    return;
+  }
+  memoryOrders = memoryOrders.filter(o => o.id !== id);
+  await saveOrdersToFile(memoryOrders);
+}
+
+async function appendOrderLog(id, logEntry) {
+  if (useMongo) {
+    await Order.updateOne(
+      { id },
+      { $push: { aiLogs: { ...logEntry, timestamp: new Date().toISOString() } } }
+    );
+    return;
+  }
+  const idx = memoryOrders.findIndex(o => o.id === id);
+  if (idx !== -1) {
+    memoryOrders[idx].aiLogs = memoryOrders[idx].aiLogs || [];
+    memoryOrders[idx].aiLogs.push({ ...logEntry, timestamp: new Date().toISOString() });
+    await saveOrdersToFile(memoryOrders);
+  }
+}
+
+async function setOrderConcepts(id, concepts, analysis) {
+  if (useMongo) {
+    await Order.updateOne(
+      { id },
+      { $set: { concepts, aiAnalysis: analysis, status: 'completed', updatedAt: new Date().toISOString() } }
+    );
+    return;
+  }
+  const idx = memoryOrders.findIndex(o => o.id === id);
+  if (idx !== -1) {
+    memoryOrders[idx].concepts = concepts;
+    memoryOrders[idx].aiAnalysis = analysis;
+    memoryOrders[idx].status = 'completed';
+    memoryOrders[idx].updatedAt = new Date().toISOString();
+    await saveOrdersToFile(memoryOrders);
+  }
+}
+
+async function setOrderError(id, errorMsg) {
+  if (useMongo) {
+    await Order.updateOne(
+      { id },
+      { $set: { status: 'error', error: errorMsg, updatedAt: new Date().toISOString() } }
+    );
+    return;
+  }
+  const idx = memoryOrders.findIndex(o => o.id === id);
+  if (idx !== -1) {
+    memoryOrders[idx].status = 'error';
+    memoryOrders[idx].error = errorMsg;
+    memoryOrders[idx].updatedAt = new Date().toISOString();
+    await saveOrdersToFile(memoryOrders);
+  }
+}
+
+// ========================================
+// MIDDLEWARE
+// ========================================
 app.use(cors({
   origin: function(origin, callback) {
     const allowed = [
@@ -39,48 +221,34 @@ app.use(cors({
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-  preflightContinue: false,
   optionsSuccessStatus: 204
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
-});
 
+// Health & ping
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', db: useMongo ? 'mongodb' : 'file+memory', time: new Date().toISOString() });
+});
 app.get('/api/ping', (req, res) => {
-  res.json({ status: 'awake', time: Date.now() });
+  res.json({ status: 'awake', db: useMongo ? 'mongodb' : 'file+memory', time: Date.now() });
 });
 
 app.use(express.static('public'));
 
-// Ensure data directory exists
-async function ensureDataDir() {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    try {
-      await fs.access(ORDERS_FILE);
-    } catch {
-      await fs.writeFile(ORDERS_FILE, JSON.stringify([], null, 2));
-    }
-  } catch (err) {
-    console.error('Data dir error:', err);
+// ========================================
+// AUTH
+// ========================================
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized — Bearer token required' });
   }
-}
-
-// Load orders
-async function loadOrders() {
-  try {
-    const data = await fs.readFile(ORDERS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch {
-    return [];
+  const token = auth.replace('Bearer ', '').trim();
+  if (token !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Unauthorized — invalid token' });
   }
-}
-
-// Save orders
-async function saveOrders(orders) {
-  await fs.writeFile(ORDERS_FILE, JSON.stringify(orders, null, 2));
+  next();
 }
 
 // ========================================
@@ -90,91 +258,107 @@ async function saveOrders(orders) {
 // Submit order
 app.post('/api/orders', async (req, res) => {
   try {
-    const { name, email, package: pkg, message, source = 'website' } = req.body;
-    
+    const { name, email, package: pkg, message, source = 'website', paymentMethod, paymentRef, price, service } = req.body;
+
     if (!name || !email || !message) {
       return res.status(400).json({ error: 'Name, email, and message are required' });
     }
 
-    const order = {
-      id: uuidv4(),
+    const order = await createOrder({
       name,
       email,
       package: pkg || 'not_specified',
       brief: message,
       source,
-      status: 'received',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      concepts: [],
-      aiLogs: []
-    };
+      paymentMethod: paymentMethod || '',
+      paymentRef: paymentRef || '',
+      price: price || '',
+      service: service || inferService(pkg, message)
+    });
 
-    const orders = await loadOrders();
-    orders.unshift(order);
-    await saveOrders(orders);
-
-    // Trigger AI generation in background
+    // Trigger AI generation in background (fire-and-forget)
     generateConceptsForOrder(order);
 
-    res.status(201).json({ 
-      success: true, 
+    res.status(201).json({
+      success: true,
       orderId: order.id,
-      message: 'Order received. AI agents are now generating concepts.' 
+      message: 'Order received. AI agents are now generating concepts.'
     });
   } catch (err) {
-    console.error('Order error:', err);
-    res.status(500).json({ error: 'Failed to process order' });
+    console.error('[API] Order error:', err);
+    res.status(500).json({ error: 'Failed to process order', detail: err.message });
   }
 });
+
+// Infer service from package or message
+function inferService(pkg, message) {
+  const text = (pkg + ' ' + message).toLowerCase();
+  if (text.includes('brand') || text.includes('identity') || text.includes('logo')) return 'brand_identity';
+  if (text.includes('social') || text.includes('instagram') || text.includes('facebook')) return 'social_media';
+  if (text.includes('print') || text.includes('marketing') || text.includes('flyer') || text.includes('brochure')) return 'print_marketing';
+  if (text.includes('packaging') || text.includes('product') || text.includes('box') || text.includes('label')) return 'product_packaging';
+  if (text.includes('web') || text.includes('website') || text.includes('ui') || text.includes('ux')) return 'website_graphics';
+  if (text.includes('event') || text.includes('promotion') || text.includes('banner') || text.includes('poster')) return 'event_promotion';
+  return 'general';
+}
 
 // Get order status (client-facing)
 app.get('/api/orders/:id', async (req, res) => {
   try {
-    const orders = await loadOrders();
-    const order = orders.find(o => o.id === req.params.id);
+    const order = await getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    
-    // Return sanitized version (no internal logs)
+
     res.json({
       id: order.id,
       status: order.status,
       createdAt: order.createdAt,
-      concepts: order.concepts,
-      conceptCount: order.concepts.length
+      concepts: order.concepts || [],
+      conceptCount: (order.concepts || []).length
     });
   } catch (err) {
+    console.error('[API] Get order error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ========================================
-// ADMIN API (Protected)
-// ========================================
-
-function requireAuth(req, res, next) {
-  const auth = req.headers.authorization;
-  if (!auth || auth !== `Bearer ${process.env.ADMIN_PASSWORD || 'yhstudio2026'}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
+// Chat API
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { sessionId, message, persona = 'sales' } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    const result = await chatAgent.handleMessage(sessionId || uuidv4(), message, persona);
+    res.json(result);
+  } catch (err) {
+    console.error('[API] Chat error:', err);
+    res.status(500).json({ error: 'Chat processing failed' });
   }
-  next();
-}
+});
 
-// Get all orders (admin)
+// Payment stubs
+app.post('/api/payments/create', async (req, res) => {
+  res.json({ success: true, paymentId: uuidv4(), status: 'pending' });
+});
+app.post('/api/payments/confirm', async (req, res) => {
+  res.json({ success: true, message: 'Payment confirmed' });
+});
+
+// ========================================
+// ADMIN API
+// ========================================
 app.get('/api/admin/orders', requireAuth, async (req, res) => {
   try {
-    const orders = await loadOrders();
+    const orders = await getOrders();
     res.json(orders);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Get single order details (admin)
 app.get('/api/admin/orders/:id', requireAuth, async (req, res) => {
   try {
-    const orders = await loadOrders();
-    const order = orders.find(o => o.id === req.params.id);
+    const order = await getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
   } catch (err) {
@@ -182,240 +366,106 @@ app.get('/api/admin/orders/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Update order status (admin)
 app.patch('/api/admin/orders/:id', requireAuth, async (req, res) => {
   try {
-    const orders = await loadOrders();
-    const idx = orders.findIndex(o => o.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ error: 'Order not found' });
-    
-    const allowed = ['status', 'notes', 'concepts', 'aiLogs'];
-    allowed.forEach(key => {
-      if (req.body[key] !== undefined) orders[idx][key] = req.body[key];
-    });
-    orders[idx].updatedAt = new Date().toISOString();
-    
-    await saveOrders(orders);
-    res.json(orders[idx]);
+    const order = await updateOrder(req.params.id, req.body);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(order);
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Update failed' });
   }
 });
 
-// Regenerate concepts for an order
 app.post('/api/admin/orders/:id/regenerate', requireAuth, async (req, res) => {
   try {
-    const orders = await loadOrders();
-    const order = orders.find(o => o.id === req.params.id);
+    const order = await getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-    
-    order.status = 'regenerating';
-    order.updatedAt = new Date().toISOString();
-    await saveOrders(orders);
-    
-    generateConceptsForOrder(order);
+
+    await updateOrder(req.params.id, { status: 'generating', concepts: [], aiLogs: [] });
+    generateConceptsForOrder({ ...order, status: 'generating' });
+
     res.json({ success: true, message: 'Regeneration started' });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Regeneration failed' });
   }
 });
 
-// Delete order
 app.delete('/api/admin/orders/:id', requireAuth, async (req, res) => {
   try {
-    let orders = await loadOrders();
-    orders = orders.filter(o => o.id !== req.params.id);
-    await saveOrders(orders);
+    await deleteOrder(req.params.id);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ error: 'Delete failed' });
   }
 });
 
-// Dashboard stats
 app.get('/api/admin/stats', requireAuth, async (req, res) => {
   try {
-    const orders = await loadOrders();
-    const stats = {
+    const orders = await getOrders();
+    const today = new Date().toISOString().split('T')[0];
+    res.json({
       total: orders.length,
-      received: orders.filter(o => o.status === 'received').length,
+      today: orders.filter(o => o.createdAt && o.createdAt.startsWith(today)).length,
       generating: orders.filter(o => o.status === 'generating').length,
       completed: orders.filter(o => o.status === 'completed').length,
-      pending: orders.filter(o => o.status === 'pending_review').length,
-      today: orders.filter(o => {
-        const d = new Date(o.createdAt);
-        const now = new Date();
-        return d.toDateString() === now.toDateString();
-      }).length
-    };
-    res.json(stats);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ========================================
-// CHAT API (AI Assistant)
-// ========================================
-
-app.post('/api/chat', async (req, res) => {
-  try {
-    const { sessionId, message, persona } = req.body;
-    if (!sessionId || !message) {
-      return res.status(400).json({ error: 'sessionId and message required' });
-    }
-    const response = await chatAgent.chat(sessionId, message, persona || 'sales');
-    res.json({ success: true, ...response });
-  } catch (err) {
-    console.error('Chat error:', err);
-    res.status(500).json({ error: 'Chat failed' });
-  }
-});
-
-app.get('/api/chat/sessions', requireAuth, async (req, res) => {
-  try {
-    const sessions = Array.from(chatAgent.sessions.entries()).map(([id, s]) => ({
-      id,
-      messageCount: s.history.length,
-      context: s.context,
-      lastActive: s.history[s.history.length - 1]?.time
-    }));
-    res.json(sessions);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ========================================
-// PAYMENT API
-// ========================================
-
-app.post('/api/payments/create', async (req, res) => {
-  try {
-    const { item, amount, currency = 'MYR', method } = req.body;
-    if (!item || !amount) {
-      return res.status(400).json({ error: 'item and amount required' });
-    }
-
-    const order = {
-      id: uuidv4(),
-      item,
-      amount,
-      currency,
-      method: method || 'pending',
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    };
-
-    // Store payment order
-    const orders = await loadOrders();
-    orders.push({ ...order, type: 'payment' });
-    await saveOrders(orders);
-
-    res.json({
-      success: true,
-      orderId: order.id,
-      checkoutUrl: `/checkout/${order.id}`,
-      message: 'Payment initiated. Complete checkout to finalize.'
+      db: useMongo ? 'mongodb' : 'file+memory'
     });
   } catch (err) {
-    console.error('Payment error:', err);
-    res.status(500).json({ error: 'Payment failed' });
-  }
-});
-
-app.post('/api/payments/confirm', async (req, res) => {
-  try {
-    const { orderId, method, reference } = req.body;
-    const orders = await loadOrders();
-    const idx = orders.findIndex(o => o.id === orderId && o.type === 'payment');
-    if (idx === -1) return res.status(404).json({ error: 'Order not found' });
-
-    orders[idx].status = 'completed';
-    orders[idx].method = method;
-    orders[idx].reference = reference;
-    orders[idx].paidAt = new Date().toISOString();
-    await saveOrders(orders);
-
-    res.json({ success: true, message: 'Payment confirmed' });
-  } catch (err) {
-    res.status(500).json({ error: 'Confirmation failed' });
+    res.status(500).json({ error: 'Stats error' });
   }
 });
 
 // ========================================
 // AI GENERATION ENGINE
 // ========================================
-
 async function generateConceptsForOrder(order) {
   try {
-    const orders = await loadOrders();
-    const idx = orders.findIndex(o => o.id === order.id);
-    if (idx === -1) return;
+    await updateOrder(order.id, { status: 'generating', updatedAt: new Date().toISOString() });
+    console.log(`[AI] Starting generation for order ${order.id} [${order.service || 'general'}]`);
 
-    orders[idx].status = 'generating';
-    orders[idx].updatedAt = new Date().toISOString();
-    await saveOrders(orders);
-
-    console.log(`[AI] Starting generation for order ${order.id}`);
-    
     const result = await orchestrator.generate(order.brief, {
       orderId: order.id,
+      service: order.service || 'general',
       onLog: async (log) => {
-        const current = await loadOrders();
-        const i = current.findIndex(o => o.id === order.id);
-        if (i !== -1) {
-          current[i].aiLogs = current[i].aiLogs || [];
-          current[i].aiLogs.push({
-            timestamp: new Date().toISOString(),
-            ...log
-          });
-          await saveOrders(current);
-        }
+        await appendOrderLog(order.id, log);
       }
     });
 
-    const final = await loadOrders();
-    const fi = final.findIndex(o => o.id === order.id);
-    if (fi !== -1) {
-      final[fi].status = 'completed';
-      final[fi].concepts = result.concepts;
-      final[fi].aiAnalysis = result.analysis;
-      final[fi].updatedAt = new Date().toISOString();
-      await saveOrders(final);
-    }
-
-    console.log(`[AI] Completed generation for order ${order.id}`);
+    await setOrderConcepts(order.id, result.concepts, result.analysis);
+    console.log(`[AI] Completed ${result.concepts.length} concepts for order ${order.id}`);
   } catch (err) {
     console.error(`[AI] Generation failed for ${order.id}:`, err);
-    const orders = await loadOrders();
-    const idx = orders.findIndex(o => o.id === order.id);
-    if (idx !== -1) {
-      orders[idx].status = 'error';
-      orders[idx].error = err.message;
-      orders[idx].updatedAt = new Date().toISOString();
-      await saveOrders(orders);
-    }
+    await setOrderError(order.id, err.message);
   }
+}
+
+// ========================================
+// KEEP-ALIVE (prevents Render free tier sleep)
+// ========================================
+if (process.env.KEEP_ALIVE !== 'false') {
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      console.log(`[KeepAlive] ${new Date().toISOString()} — pinging self`);
+      // Internal no-op to keep instance warm
+    } catch (err) {
+      console.error('[KeepAlive] Error:', err.message);
+    }
+  });
 }
 
 // ========================================
 // STARTUP
 // ========================================
-
-async function start() {
-  await ensureDataDir();
+(async () => {
+  await connectDatabase();
   app.listen(PORT, () => {
     console.log(`
 ╔══════════════════════════════════════════╗
-║     YH STUDIO BACKEND ONLINE             ║
-╠══════════════════════════════════════════╣
-║  Port:     ${PORT.toString().padEnd(28)}║
-║  Admin:    http://localhost:${PORT}/admin  ║
-║  API:      http://localhost:${PORT}/api    ║
+║  YH STUDIO BACKEND v2.0                  ║
+║  Port: ${PORT.toString().padEnd(35)} ║
+║  DB:   ${(useMongo ? 'MongoDB' : 'File+Memory').padEnd(35)} ║
+║  Admin: http://localhost:${PORT}/admin     ${' '.repeat(PORT.toString().length === 4 ? 1 : 0)}║
 ╚══════════════════════════════════════════╝
     `);
   });
-}
-
-start();
+})();

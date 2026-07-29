@@ -10,4 +10,4 @@ services:
       - key: PORT
         value: 10000
       - key: ADMIN_PASSWORD
-        generateValue: true
+        value: yhstudio2026
